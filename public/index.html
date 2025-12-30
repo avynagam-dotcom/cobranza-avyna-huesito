@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cobranza AVYNA</title>
+  <style>
+    :root{
+      --bg1:#071027; --bg2:#0b1535; --line:rgba(255,255,255,.10);
+      --text:#e9eefc; --muted:rgba(233,238,252,.70);
+      --gold:#f0c85b; --gold2:#e0b84b; --green:#57d47a; --red:#ff5a5a;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      color:var(--text);
+      background:
+        radial-gradient(1200px 700px at 50% -100px, rgba(74,115,255,.25), transparent 60%),
+        radial-gradient(900px 600px at 50% 110%, rgba(74,115,255,.18), transparent 55%),
+        linear-gradient(180deg,var(--bg1),var(--bg2));
+      min-height:100vh;
+      display:flex; align-items:flex-start; justify-content:center;
+      padding:48px 16px;
+    }
+    .frame{
+      width:min(980px, 100%);
+      border:2px dashed rgba(255,255,255,.18);
+      border-radius:18px;
+      padding:28px;
+      background: rgba(5,10,25,.25);
+      box-shadow: 0 20px 80px rgba(0,0,0,.35);
+      backdrop-filter: blur(8px);
+    }
+    h1{margin:0 0 6px 0; font-size:44px}
+    .sub{margin:0 0 18px 0; color:var(--muted); font-size:14px}
+    .topRow{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap}
+    .pill{
+      padding:8px 14px; border-radius:999px; border:1px solid var(--line);
+      color:var(--muted); font-size:13px; background: rgba(255,255,255,.04);
+    }
+
+    /* KPI */
+    .kpiWrap{
+      margin-top:14px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:14px;
+      background: rgba(255,255,255,.03);
+    }
+    .kpiGrid{
+      display:grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap:10px;
+    }
+    .kpiCard{
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:14px;
+      padding:12px 12px;
+      background: rgba(0,0,0,.12);
+      min-height:86px;
+      overflow:hidden;
+    }
+    .kpiTitle{color:rgba(233,238,252,.72); font-size:12px; font-weight:900; letter-spacing:.2px}
+    .kpiValue{font-size:28px; font-weight:950; margin-top:4px; line-height:1.05}
+    .kpiSub{color:rgba(233,238,252,.62); font-size:12px; margin-top:6px}
+    .bar{
+      margin-top:10px; height:10px; border-radius:999px; background: rgba(255,255,255,.08);
+      overflow:hidden;
+    }
+    .bar > div{height:100%; width:0%;}
+    .barGrad{background: linear-gradient(90deg, #ff5a5a, #f0c85b, #57d47a);}
+
+    .kpiActions{
+      display:flex;
+      gap:10px;
+      justify-content:flex-end;
+      align-items:center;
+      margin-top:12px;
+      flex-wrap:wrap;
+    }
+
+    /* Uploader */
+    .uploader{
+      margin-top:14px;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:14px;
+      background: rgba(255,255,255,.03);
+      display:flex;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+    }
+    .drop{
+      flex:1;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+      padding:14px 14px;
+      background: rgba(0,0,0,.12);
+      color:var(--muted);
+      user-select:none;
+    }
+    .drop.drag{ outline:2px solid rgba(240,200,91,.55); color:var(--text); }
+    .btn{
+      border:0;
+      padding:12px 18px;
+      border-radius:12px;
+      background: linear-gradient(180deg,var(--gold),var(--gold2));
+      color:#1a1406;
+      font-weight:950;
+      cursor:pointer;
+      box-shadow: 0 10px 26px rgba(240,200,91,.20);
+      white-space:nowrap;
+    }
+    .btnSmall{
+      border:0;
+      padding:9px 14px;
+      border-radius:12px;
+      background: linear-gradient(180deg,var(--gold),var(--gold2));
+      color:#1a1406;
+      font-weight:950;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+    .btnGhost{
+      border:1px solid rgba(255,255,255,.14);
+      padding:10px 14px;
+      border-radius:12px;
+      background: rgba(255,255,255,.06);
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+    .btnGhost:disabled{ opacity:.45; cursor:not-allowed; }
+    input[type="file"]{display:none}
+
+    .msg{margin:10px 0 10px 0; font-weight:900}
+    .msg.ok{color:var(--green)}
+    .msg.err{color:var(--red)}
+
+    .search{
+      width:100%;
+      padding:12px 14px;
+      border-radius:10px;
+      border:1px solid rgba(255,255,255,.12);
+      background:#f7f8fb;
+      color:#141414;
+      outline:none;
+      margin:10px 0 8px 0;
+      font-size:14px;
+    }
+
+    .miniRow{
+      display:flex; gap:10px; align-items:center; justify-content:space-between;
+      margin:6px 0 12px 0; flex-wrap:wrap;
+    }
+    .miniHint{color:rgba(233,238,252,.62); font-size:12px}
+    .tag{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:6px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.05);
+      color:rgba(233,238,252,.78); font-size:12px;
+    }
+    .dot{width:8px;height:8px;border-radius:50%;}
+    .dot.green{background:var(--green)}
+    .dot.gold{background:var(--gold)}
+    .dot.red{background:var(--red)}
+
+    table{width:100%; border-collapse:collapse; font-size:14px}
+    th,td{padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.10); text-align:left}
+    th{color:rgba(233,238,252,.65); font-weight:900; font-size:12px}
+    .muted{color:var(--muted)}
+    .right{text-align:right}
+    .foot{margin-top:10px; color:rgba(233,238,252,.60); font-size:12px}
+
+    .statusPill{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.05);
+      font-weight:900; font-size:12px;
+      user-select:none; white-space:nowrap;
+    }
+    .statusPill.clickable{cursor:pointer;}
+    .statusPill .sDot{width:8px;height:8px;border-radius:50%;}
+    .sGreen{background:var(--green)}
+    .sGold{background:var(--gold)}
+    .sRed{background:var(--red)}
+    .statusHint{margin-top:6px; font-size:11px; color:rgba(233,238,252,.55)}
+
+    /* Modales */
+    .overlay{
+      position:fixed; inset:0;
+      background:rgba(0,0,0,.55);
+      display:none;
+      align-items:center; justify-content:center;
+      padding:20px;
+      z-index:999;
+    }
+    .overlay.show{display:flex}
+    .modal{
+      width:min(520px, 100%);
+      background: rgba(7,16,39,.96);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:18px;
+      padding:18px;
+      box-shadow: 0 25px 90px rgba(0,0,0,.55);
+    }
+    .modal h3{margin:0 0 8px 0; font-size:18px}
+    .modal .desc{color:rgba(233,238,252,.70); font-size:13px; line-height:1.35}
+    .modal label{display:block; font-size:13px; color:var(--muted); margin:12px 0 6px}
+    .modal input{
+      width:100%; padding:12px 12px; border-radius:10px;
+      border:1px solid rgba(255,255,255,.12);
+      background:#f7f8fb; color:#141414; outline:none;
+    }
+    .modal .row{display:flex; gap:10px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap}
+    .btn2{
+      border:1px solid rgba(255,255,255,.14);
+      padding:10px 14px;
+      border-radius:12px;
+      background: rgba(255,255,255,.06);
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+    }
+    .btn3{
+      border:0;
+      padding:10px 14px;
+      border-radius:12px;
+      background: linear-gradient(180deg,var(--gold),var(--gold2));
+      color:#1a1406;
+      font-weight:950;
+      cursor:pointer;
+    }
+
+    @media (max-width: 980px){
+      .kpiGrid{grid-template-columns: repeat(3, minmax(0, 1fr));}
+    }
+    @media (max-width: 760px){
+      h1{font-size:34px}
+      .uploader{flex-direction:column; align-items:stretch}
+      .btn,.btnGhost{width:100%}
+      .kpiGrid{grid-template-columns: repeat(2, minmax(0, 1fr));}
+    }
+  </style>
+</head>
+
+<body>
+  <div class="frame">
+    <div class="topRow">
+      <div>
+        <h1>Cobranza AVYNA</h1>
+        <p class="sub">Arrastra y suelta el PDF. El sistema extrae <b>cliente + total</b> automáticamente.</p>
+      </div>
+      <div class="pill" id="batchPill">Batch actual: —</div>
+    </div>
+
+    <!-- KPIs (SIN "Faltantes") -->
+    <div class="kpiWrap">
+      <div class="kpiGrid">
+        <div class="kpiCard">
+          <div class="kpiTitle">% Cobranza</div>
+          <div class="kpiValue" id="kpiPct">—</div>
+          <div class="kpiSub" id="kpiPctSub">—</div>
+          <div class="bar"><div id="kpiBar" class="barGrad"></div></div>
+        </div>
+
+        <div class="kpiCard">
+          <div class="kpiTitle">Cobrado</div>
+          <div class="kpiValue" id="kpiCobrado">—</div>
+          <div class="kpiSub">Pagos acumulados (solo entregadas)</div>
+        </div>
+
+        <div class="kpiCard">
+          <div class="kpiTitle">Por cobrar</div>
+          <div class="kpiValue" id="kpiPorCobrar">—</div>
+          <div class="kpiSub">Saldo total (solo entregadas)</div>
+        </div>
+
+        <div class="kpiCard">
+          <div class="kpiTitle">Utilidad cobrada</div>
+          <div class="kpiValue" id="kpiUtilCobrada">—</div>
+          <div class="kpiSub">Tu margen ya cobrado</div>
+        </div>
+
+        <div class="kpiCard">
+          <div class="kpiTitle">Utilidad por cobrar</div>
+          <div class="kpiValue" id="kpiUtilPorCobrar">—</div>
+          <div class="kpiSub">Tu margen pendiente</div>
+        </div>
+      </div>
+
+      <div class="kpiActions">
+        <button class="btnGhost" id="whoBtn" type="button">Ver quién falta</button>
+        <button class="btnGhost" id="backBatchBtn" type="button">Volver a batch</button>
+        <button class="btnGhost" id="reportBtn" type="button" disabled>Reporte mensual</button>
+      </div>
+    </div>
+
+    <!-- Uploader -->
+    <div class="uploader">
+      <div id="dropZone" class="drop">Arrastra aquí el PDF</div>
+      <button id="pickBtn" class="btn" type="button">Seleccionar PDF</button>
+      <input id="fileInput" type="file" accept="application/pdf" />
+    </div>
+
+    <div id="msg" class="msg"></div>
+
+    <input id="search" class="search" placeholder="Buscar cliente o nota (histórico)..." />
+
+    <div class="miniRow">
+      <div class="miniHint" id="modeHint">—</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <div class="tag"><span class="dot gold"></span>Lista (batch): <b id="countBatch">0</b></div>
+        <div class="tag"><span class="dot green"></span>Histórico: <b id="countAll">0</b></div>
+        <div class="tag"><span class="dot red"></span>Pendientes: <b id="countPend">0</b></div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width:38%">Cliente</th>
+          <th class="right">Total</th>
+          <th class="right">Pagado</th>
+          <th class="right">Saldo</th>
+          <th>Estado</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td class="muted" colspan="6">Sin notas todavía.</td></tr>
+      </tbody>
+    </table>
+
+    <div class="foot">Por defecto ves el <b>batch actual</b>. Con búsqueda ves <b>histórico</b>. “Ver quién falta” muestra <b>pendientes globales</b> (entregadas con saldo).</div>
+  </div>
+
+  <!-- Modal: Pago -->
+  <div id="overlayPay" class="overlay" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3>Registrar pago</h3>
+      <div class="muted" id="payClient" style="margin-top:-2px"></div>
+
+      <label>Monto pagado</label>
+      <input id="payAmount" inputmode="decimal" placeholder="Ej. 500" />
+
+      <div class="row">
+        <button id="cancelPay" class="btn2" type="button">Cancelar</button>
+        <button id="savePay" class="btn3" type="button">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Entregado -->
+  <div id="overlayEnt" class="overlay" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3>Marcar como entregado</h3>
+      <div class="desc" id="entDesc"></div>
+
+      <div class="row">
+        <button id="cancelEnt" class="btn2" type="button">Cancelar</button>
+        <button id="saveEnt" class="btn3" type="button">Sí, entregado</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Elements
+    const dropZone = document.getElementById("dropZone");
+    const pickBtn = document.getElementById("pickBtn");
+    const fileInput = document.getElementById("fileInput");
+    const msg = document.getElementById("msg");
+    const tbody = document.getElementById("tbody");
+    const batchPill = document.getElementById("batchPill");
+    const search = document.getElementById("search");
+    const modeHint = document.getElementById("modeHint");
+    const countBatch = document.getElementById("countBatch");
+    const countAll = document.getElementById("countAll");
+    const countPend = document.getElementById("countPend");
+
+    // KPI
+    const kpiPct = document.getElementById("kpiPct");
+    const kpiPctSub = document.getElementById("kpiPctSub");
+    const kpiCobrado = document.getElementById("kpiCobrado");
+    const kpiPorCobrar = document.getElementById("kpiPorCobrar");
+    const kpiUtilCobrada = document.getElementById("kpiUtilCobrada");
+    const kpiUtilPorCobrar = document.getElementById("kpiUtilPorCobrar");
+    const kpiBar = document.getElementById("kpiBar");
+
+    // Actions
+    const whoBtn = document.getElementById("whoBtn");
+    const backBatchBtn = document.getElementById("backBatchBtn");
+    const reportBtn = document.getElementById("reportBtn");
+
+    // Modal Pago
+    const overlayPay = document.getElementById("overlayPay");
+    const payClient = document.getElementById("payClient");
+    const payAmount = document.getElementById("payAmount");
+    const cancelPay = document.getElementById("cancelPay");
+    const savePay = document.getElementById("savePay");
+    let payingId = null;
+
+    // Modal Entregado
+    const overlayEnt = document.getElementById("overlayEnt");
+    const entDesc = document.getElementById("entDesc");
+    const cancelEnt = document.getElementById("cancelEnt");
+    const saveEnt = document.getElementById("saveEnt");
+    let deliveringId = null;
+
+    // State
+    window.__allNotas = [];
+    window.__batchKey = null;
+    window.__viewMode = "batch"; // "batch" | "pendientes"
+
+    function setMsg(type, text){
+      msg.className = "msg " + (type || "");
+      msg.textContent = text || "";
+    }
+
+    function money(n){
+  if (n == null || Number.isNaN(n)) return "—";
+  const rounded = Math.round(n);
+  return "$" + rounded.toLocaleString("es-MX");
+}
+
+    function escapeHtml(s){
+      return String(s || "").replace(/[&<>"']/g, m => ({
+        "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+      }[m]));
+    }
+
+    function daysToEndOfMonth(d = new Date()){
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      end.setHours(0,0,0,0);
+      const cur = new Date(d);
+      cur.setHours(0,0,0,0);
+      const diffMs = end.getTime() - cur.getTime();
+      return Math.max(0, Math.round(diffMs / (24*60*60*1000)));
+    }
+
+    function updateReportButton(){
+      const remaining = daysToEndOfMonth(new Date());
+      if (remaining === 0){
+        reportBtn.disabled = false;
+        reportBtn.textContent = "Reporte mensual";
+      } else {
+        reportBtn.disabled = true;
+        reportBtn.textContent = `Reporte en ${remaining} día${remaining === 1 ? "" : "s"}`;
+      }
+    }
+
+    function statusLabel(n){
+      const s = (n.statusCredito || "").toUpperCase();
+      if (s === "LIQUIDADO") return { text:"Liquidado", dot:"sGreen", clickable:false };
+      if (s === "VENCIDO") return { text:"Vencido", dot:"sRed", clickable:false };
+      if (s === "POR_VENCER") return { text:"Por vencer", dot:"sGold", clickable:false };
+      if (s === "EN_PLAZO") return { text:"En plazo", dot:"sGreen", clickable:false };
+      return { text:"Pre-entrega", dot:"sGold", clickable:true };
+    }
+
+    function render(list){
+      if (!list || !list.length){
+        tbody.innerHTML = `<tr><td class="muted" colspan="6">Sin notas para mostrar.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = list.map(n => {
+        const client = escapeHtml(n.cliente || n.originalName || n.filename || "—");
+        const total = money(n.total);
+        const pagado = money(n.pagado || 0);
+        const saldo = money(n.saldo);
+
+        const st = statusLabel(n);
+        const due = n.dueAt ? new Date(n.dueAt).toLocaleDateString("es-MX") : null;
+
+        const statusHtml = `
+          <div>
+            <div class="statusPill ${st.clickable ? "clickable" : ""}" data-ent="${st.clickable ? n.id : ""}">
+              <span class="sDot ${st.dot}"></span>
+              ${escapeHtml(st.text)}
+            </div>
+            ${due ? `<div class="statusHint">Vence: ${escapeHtml(due)}</div>` : (st.clickable ? `<div class="statusHint">Click para marcar entregado</div>` : ``)}
+          </div>
+        `;
+
+        return `
+          <tr>
+            <td style="font-weight:900">${client}</td>
+            <td class="right">${total}</td>
+            <td class="right">${pagado}</td>
+            <td class="right">${saldo}</td>
+            <td>${statusHtml}</td>
+            <td><button class="btnSmall" data-pay="${n.id}">Pago</button></td>
+          </tr>
+        `;
+      }).join("");
+
+      tbody.querySelectorAll("[data-pay]").forEach(b => {
+        b.addEventListener("click", () => openPay(b.getAttribute("data-pay")));
+      });
+
+      tbody.querySelectorAll("[data-ent]").forEach(el => {
+        const id = el.getAttribute("data-ent");
+        if (!id) return;
+        el.addEventListener("click", () => openEnt(id));
+      });
+    }
+
+    async function refreshKPIs(){
+      try{
+        const r = await fetch("/api/kpis");
+        const j = await r.json();
+        if (!j || !j.ok) return;
+
+        const pct = (j.pctCobranza || 0);
+        kpiPct.textContent = (pct * 100).toFixed(1) + "%";
+        kpiPctSub.textContent = `${money(j.totalCobrado || 0)} / ${money(j.totalCobrable || 0)}`;
+
+        kpiCobrado.textContent = money(j.totalCobrado || 0);
+        kpiPorCobrar.textContent = money(j.totalSaldo || 0);
+
+        kpiUtilCobrada.textContent = money(j.utilidadCobrada || 0);
+        kpiUtilPorCobrar.textContent = money(j.utilidadPorCobrar || 0);
+
+        const w = Math.max(0, Math.min(100, Math.round(pct * 100)));
+        kpiBar.style.width = w + "%";
+      }catch(e){}
+    }
+
+    async function refreshList(){
+      const r = await fetch("/api/notas");
+      const j = await r.json();
+
+      window.__batchKey = j.batchKey || null;
+      batchPill.textContent = `Batch actual: ${window.__batchKey || "—"}`;
+
+      const notas = (j.notas || []).map(n => ({
+        id: n.id,
+        batchKey: n.batchKey,
+        cliente: n.cliente || n.originalName || n.filename,
+        originalName: n.originalName,
+        filename: n.filename,
+        total: (n.total ?? null),
+        pagado: (n.pagado ?? 0),
+        saldo: (n.saldo ?? null),
+        deliveredAt: n.deliveredAt || null,
+        dueAt: n.dueAt || null,
+        statusCredito: n.statusCredito || null
+      }));
+
+      window.__allNotas = notas;
+      countAll.textContent = String(notas.length);
+
+      const current = notas.filter(x => String(x.batchKey||"") === String(window.__batchKey||""));
+      countBatch.textContent = String(current.length);
+
+      const pend = notas.filter(x => !!x.deliveredAt).filter(x => typeof x.saldo === "number" && x.saldo > 0);
+      countPend.textContent = String(pend.length);
+
+      applyFilter();
+      await refreshKPIs();
+      updateReportButton();
+      updateBackBatchButton();
+    }
+
+    function updateBackBatchButton(){
+      // Visible siempre; solo habilitado cuando estás en pendientes
+      const isPend = window.__viewMode === "pendientes";
+      backBatchBtn.disabled = !isPend;
+    }
+
+    function applyFilter(){
+      const q = (search.value || "").trim().toLowerCase();
+      const all = window.__allNotas || [];
+      const batchKey = String(window.__batchKey || "");
+      const current = all.filter(n => String(n.batchKey || "") === batchKey);
+
+      if (window.__viewMode === "pendientes"){
+        modeHint.textContent = "Mostrando PENDIENTES (global) ordenados por saldo (para iniciar llamadas).";
+      } else {
+        modeHint.textContent = q
+          ? "Mostrando HISTÓRICO (buscador)."
+          : "Mostrando SOLO el batch actual (lista de verificación semanal).";
+      }
+
+      updateBackBatchButton();
+
+      if (window.__viewMode === "pendientes"){
+        let pendientes = all
+          .filter(n => !!n.deliveredAt)
+          .filter(n => typeof n.saldo === "number" && n.saldo > 0)
+          .sort((a,b) => (b.saldo || 0) - (a.saldo || 0));
+
+        if (q){
+          pendientes = pendientes.filter(n => {
+            const a = (n.cliente || "").toLowerCase();
+            const b = (n.originalName || "").toLowerCase();
+            const c = (n.filename || "").toLowerCase();
+            return a.includes(q) || b.includes(q) || c.includes(q);
+          });
+        }
+
+        render(pendientes);
+        return;
+      }
+
+      if (!q){
+        render(current);
+        return;
+      }
+
+      const filtered = all.filter(n => {
+        const a = (n.cliente || "").toLowerCase();
+        const b = (n.originalName || "").toLowerCase();
+        const c = (n.filename || "").toLowerCase();
+        return a.includes(q) || b.includes(q) || c.includes(q);
+      });
+
+      render(filtered);
+    }
+
+    async function uploadFile(file){
+      setMsg("", "");
+      const fd = new FormData();
+      fd.append("pdf", file);
+
+      let j = null;
+      try{
+        const r = await fetch("/api/upload", { method:"POST", body: fd });
+        j = await r.json();
+      }catch(e){
+        setMsg("err", "Error al subir PDF");
+        return;
+      }
+
+      if (j && j.ok){
+        setMsg("ok", "PDF recibido correctamente ✓");
+      } else {
+        if (j && j.duplicate) setMsg("err", "Nota duplicada");
+        else setMsg("err", (j && j.message) ? j.message : "Error al subir PDF");
+      }
+
+      await refreshList();
+    }
+
+    // Payments modal
+    function openPay(id){
+      payingId = id;
+      const n = (window.__allNotas || []).find(x => String(x.id) === String(id));
+      payClient.textContent = n ? (n.cliente || n.originalName || "") : "";
+      payAmount.value = "";
+      overlayPay.classList.add("show");
+      payAmount.focus();
+    }
+    function closePay(){
+      overlayPay.classList.remove("show");
+      payingId = null;
+      payAmount.value = "";
+    }
+    cancelPay.addEventListener("click", closePay);
+    overlayPay.addEventListener("click", (e) => { if (e.target === overlayPay) closePay(); });
+
+    savePay.addEventListener("click", async () => {
+      const raw = (payAmount.value || "").trim().replace(/,/g,"");
+      const val = Number(raw);
+      if (!Number.isFinite(val) || val <= 0) return;
+
+      await fetch("/api/pago", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ id: payingId, monto: val })
+      });
+
+      closePay();
+      await refreshList();
+    });
+
+    // Entregado modal
+    function openEnt(id){
+      deliveringId = id;
+      const n = (window.__allNotas || []).find(x => String(x.id) === String(id));
+      const label = n ? (n.cliente || n.originalName || "") : "";
+      entDesc.innerHTML = `
+        <div style="margin-top:6px">
+          Se marcará como <b>ENTREGADO</b>: <b>${escapeHtml(label)}</b><br/>
+          Inicia el crédito y fija vencimiento en <b>15 días</b> (contando el día de entrega).
+        </div>
+      `;
+      overlayEnt.classList.add("show");
+    }
+    function closeEnt(){
+      overlayEnt.classList.remove("show");
+      deliveringId = null;
+    }
+    cancelEnt.addEventListener("click", closeEnt);
+    overlayEnt.addEventListener("click", (e) => { if (e.target === overlayEnt) closeEnt(); });
+
+    saveEnt.addEventListener("click", async () => {
+      if (!deliveringId) return;
+
+      await fetch("/api/entregar", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ id: deliveringId })
+      });
+
+      closeEnt();
+      await refreshList();
+    });
+
+    // Pendientes / Batch
+    whoBtn.addEventListener("click", () => {
+      window.__viewMode = "pendientes";
+      applyFilter();
+    });
+    backBatchBtn.addEventListener("click", () => {
+      window.__viewMode = "batch";
+      applyFilter();
+    });
+
+    // Search
+    search.addEventListener("input", applyFilter);
+
+    // Drag & drop
+    ["dragenter","dragover"].forEach(ev => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add("drag");
+      });
+    });
+    ["dragleave","drop"].forEach(ev => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove("drag");
+      });
+    });
+    dropZone.addEventListener("drop", (e) => {
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      uploadFile(f);
+    });
+
+    // Picker
+    pickBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) return;
+      uploadFile(f);
+      fileInput.value = "";
+    });
+
+    // Report button (solo UI por ahora)
+    reportBtn.addEventListener("click", () => {
+      if (reportBtn.disabled) return;
+      setMsg("ok", "Reporte mensual: listo para generar (fin de mes).");
+    });
+
+    // Init
+    updateReportButton();
+    refreshList();
+  </script>
+</body>
+</html>
