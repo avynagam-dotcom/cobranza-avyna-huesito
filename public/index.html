@@ -2,11 +2,13 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Cobranza AVYNA</title>
+
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
   <style>
     :root{
       --bg1:#071027; --bg2:#0b1535; --line:rgba(255,255,255,.10);
@@ -14,6 +16,7 @@
       --gold:#f0c85b; --gold2:#e0b84b; --green:#57d47a; --red:#ff5a5a;
     }
     *{box-sizing:border-box}
+    html,body{height:100%}
     body{
       margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
       color:var(--text);
@@ -24,6 +27,9 @@
       min-height:100vh;
       display:flex; align-items:flex-start; justify-content:center;
       padding:48px 16px;
+      padding-top: calc(48px + env(safe-area-inset-top));
+      padding-bottom: calc(48px + env(safe-area-inset-bottom));
+      overflow-x:hidden;
     }
     .frame{
       width:min(980px, 100%);
@@ -40,6 +46,10 @@
     .pill{
       padding:8px 14px; border-radius:999px; border:1px solid var(--line);
       color:var(--muted); font-size:13px; background: rgba(255,255,255,.04);
+      max-width:100%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
     }
 
     /* KPI */
@@ -171,7 +181,14 @@
     .dot.gold{background:var(--gold)}
     .dot.red{background:var(--red)}
 
-    table{width:100%; border-collapse:collapse; font-size:14px}
+    .tableWrap{
+      width:100%;
+      overflow-x:auto;
+      -webkit-overflow-scrolling: touch;
+      border-radius:12px;
+    }
+
+    table{width:100%; border-collapse:collapse; font-size:14px; min-width:780px}
     th,td{padding:12px 8px; border-bottom:1px solid rgba(255,255,255,.10); text-align:left}
     th{color:rgba(233,238,252,.65); font-weight:900; font-size:12px}
     .muted{color:var(--muted)}
@@ -241,12 +258,16 @@
 
     @media (max-width: 980px){
       .kpiGrid{grid-template-columns: repeat(3, minmax(0, 1fr));}
+      table{min-width:740px}
     }
     @media (max-width: 760px){
-      h1{font-size:34px}
+      body{padding:18px 12px; padding-top: calc(18px + env(safe-area-inset-top)); padding-bottom: calc(18px + env(safe-area-inset-bottom));}
+      .frame{padding:16px}
+      h1{font-size:30px}
       .uploader{flex-direction:column; align-items:stretch}
       .btn,.btnGhost{width:100%}
       .kpiGrid{grid-template-columns: repeat(2, minmax(0, 1fr));}
+      table{min-width:720px}
     }
   </style>
 </head>
@@ -261,7 +282,7 @@
       <div class="pill" id="batchPill">Batch actual: —</div>
     </div>
 
-    <!-- KPIs (SIN "Faltantes") -->
+    <!-- KPIs -->
     <div class="kpiWrap">
       <div class="kpiGrid">
         <div class="kpiCard">
@@ -323,21 +344,23 @@
       </div>
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th style="width:38%">Cliente</th>
-          <th class="right">Total</th>
-          <th class="right">Pagado</th>
-          <th class="right">Saldo</th>
-          <th>Estado</th>
-          <th>Acción</th>
-        </tr>
-      </thead>
-      <tbody id="tbody">
-        <tr><td class="muted" colspan="6">Sin notas todavía.</td></tr>
-      </tbody>
-    </table>
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:38%">Cliente</th>
+            <th class="right">Total</th>
+            <th class="right">Pagado</th>
+            <th class="right">Saldo</th>
+            <th>Estado</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td class="muted" colspan="6">Sin notas todavía.</td></tr>
+        </tbody>
+      </table>
+    </div>
 
     <div class="foot">Por defecto ves el <b>batch actual</b>. Con búsqueda ves <b>histórico</b>. “Ver quién falta” muestra <b>pendientes globales</b> (entregadas con saldo).</div>
   </div>
@@ -425,10 +448,10 @@
     }
 
     function money(n){
-  if (n == null || Number.isNaN(n)) return "—";
-  const rounded = Math.round(n);
-  return "$" + rounded.toLocaleString("es-MX");
-}
+      if (n == null || Number.isNaN(n)) return "—";
+      const rounded = Math.round(n);
+      return "$" + rounded.toLocaleString("es-MX");
+    }
 
     function escapeHtml(s){
       return String(s || "").replace(/[&<>"']/g, m => ({
@@ -513,67 +536,7 @@
       });
     }
 
-    async function refreshKPIs(){
-      try{
-        const r = await fetch("/api/kpis");
-        const j = await r.json();
-        if (!j || !j.ok) return;
-
-        const pct = (j.pctCobranza || 0);
-        kpiPct.textContent = (pct * 100).toFixed(1) + "%";
-        kpiPctSub.textContent = `${money(j.totalCobrado || 0)} / ${money(j.totalCobrable || 0)}`;
-
-        kpiCobrado.textContent = money(j.totalCobrado || 0);
-        kpiPorCobrar.textContent = money(j.totalSaldo || 0);
-
-        kpiUtilCobrada.textContent = money(j.utilidadCobrada || 0);
-        kpiUtilPorCobrar.textContent = money(j.utilidadPorCobrar || 0);
-
-        const w = Math.max(0, Math.min(100, Math.round(pct * 100)));
-        kpiBar.style.width = w + "%";
-      }catch(e){}
-    }
-
-    async function refreshList(){
-      const r = await fetch(`/api/notas?ts=${Date.now()}`, {
-  cache: "no-store"
-});
-      const j = await r.json();
-
-      window.__batchKey = j.batchKey || null;
-      batchPill.textContent = `Batch actual: ${window.__batchKey || "—"}`;
-
-      const notas = (j.notas || []).map(n => ({
-        id: n.id,
-        batchKey: n.batchKey,
-        cliente: n.cliente || n.originalName || n.filename,
-        originalName: n.originalName,
-        filename: n.filename,
-        total: (n.total ?? null),
-        pagado: (n.pagado ?? 0),
-        saldo: (n.saldo ?? null),
-        deliveredAt: n.deliveredAt || null,
-        dueAt: n.dueAt || null,
-        statusCredito: n.statusCredito || null
-      }));
-
-      window.__allNotas = notas;
-      countAll.textContent = String(notas.length);
-
-      const current = notas.filter(x => String(x.batchKey||"") === String(window.__batchKey||""));
-      countBatch.textContent = String(current.length);
-
-      const pend = notas.filter(x => !!x.deliveredAt).filter(x => typeof x.saldo === "number" && x.saldo > 0);
-      countPend.textContent = String(pend.length);
-
-      applyFilter();
-      await refreshKPIs();
-      updateReportButton();
-      updateBackBatchButton();
-    }
-
     function updateBackBatchButton(){
-      // Visible siempre; solo habilitado cuando estás en pendientes
       const isPend = window.__viewMode === "pendientes";
       backBatchBtn.disabled = !isPend;
     }
@@ -626,6 +589,75 @@
       });
 
       render(filtered);
+    }
+
+    async function refreshKPIs(){
+      try{
+        const url = `/api/kpis?ts=${Date.now()}`;
+        const r = await fetch(url, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+        });
+        const j = await r.json();
+        if (!j || !j.ok) return;
+
+        const pct = (j.pctCobranza || 0);
+        kpiPct.textContent = (pct * 100).toFixed(1) + "%";
+        kpiPctSub.textContent = `${money(j.totalCobrado || 0)} / ${money(j.totalCobrable || 0)}`;
+
+        kpiCobrado.textContent = money(j.totalCobrado || 0);
+        kpiPorCobrar.textContent = money(j.totalSaldo || 0);
+
+        kpiUtilCobrada.textContent = money(j.utilidadCobrada || 0);
+        kpiUtilPorCobrar.textContent = money(j.utilidadPorCobrar || 0);
+
+        const w = Math.max(0, Math.min(100, Math.round(pct * 100)));
+        kpiBar.style.width = w + "%";
+      }catch(e){}
+    }
+
+    async function refreshList(){
+      try{
+        const url = `/api/notas?ts=${Date.now()}`;
+        const r = await fetch(url, {
+          cache: "no-store",
+          headers: { "Cache-Control": "no-cache", "Pragma": "no-cache" }
+        });
+        const j = await r.json();
+
+        window.__batchKey = j.batchKey || null;
+        batchPill.textContent = `Batch actual: ${window.__batchKey || "—"}`;
+
+        const notas = (j.notas || []).map(n => ({
+          id: n.id,
+          batchKey: n.batchKey,
+          cliente: n.cliente || n.originalName || n.filename,
+          originalName: n.originalName,
+          filename: n.filename,
+          total: (n.total ?? null),
+          pagado: (n.pagado ?? 0),
+          saldo: (n.saldo ?? null),
+          deliveredAt: n.deliveredAt || null,
+          dueAt: n.dueAt || null,
+          statusCredito: n.statusCredito || null
+        }));
+
+        window.__allNotas = notas;
+        countAll.textContent = String(notas.length);
+
+        const current = notas.filter(x => String(x.batchKey||"") === String(window.__batchKey||""));
+        countBatch.textContent = String(current.length);
+
+        const pend = notas.filter(x => !!x.deliveredAt).filter(x => typeof x.saldo === "number" && x.saldo > 0);
+        countPend.textContent = String(pend.length);
+
+        applyFilter();
+        await refreshKPIs();
+        updateReportButton();
+        updateBackBatchButton();
+      }catch(e){
+        // si falla fetch, no rompas UI
+      }
     }
 
     async function uploadFile(file){
@@ -765,6 +797,22 @@
       if (reportBtn.disabled) return;
       setMsg("ok", "Reporte mensual: listo para generar (fin de mes).");
     });
+
+    // REFRESH “REAL” EN iPHONE:
+    // - al volver a la app (focus/visibility)
+    // - polling suave cuando está visible
+    function isVisible(){
+      return document.visibilityState === "visible";
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (isVisible()) refreshList();
+    });
+    window.addEventListener("focus", () => refreshList());
+
+    setInterval(() => {
+      if (isVisible()) refreshList();
+    }, 15000);
 
     // Init
     updateReportButton();
