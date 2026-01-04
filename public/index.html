@@ -535,7 +535,9 @@
     }
 
     async function refreshList(){
-      const r = await fetch("/api/notas");
+      const r = await fetch(`/api/notas?ts=${Date.now()}`, {
+  cache: "no-store"
+});
       const j = await r.json();
 
       window.__batchKey = j.batchKey || null;
