@@ -152,17 +152,41 @@
     .msg.ok{color:var(--green)}
     .msg.err{color:var(--red)}
 
+    .searchWrap{
+      position:relative;
+      margin:10px 0 8px 0;
+      width:100%;
+    }
     .search{
       width:100%;
       padding:12px 14px;
+      padding-right: 40px; /* space for X */
       border-radius:10px;
       border:1px solid rgba(255,255,255,.12);
       background:#f7f8fb;
       color:#141414;
       outline:none;
-      margin:10px 0 8px 0;
+      font-size:14px;
+      margin:0; /* reset */
+    }
+    .clearBtn{
+      position:absolute;
+      right:10px;
+      top:50%;
+      transform:translateY(-50%);
+      background:rgba(0,0,0,.1);
+      border:none;
+      border-radius:50%;
+      width:24px; height:24px;
+      cursor:pointer;
+      color:#555;
+      font-weight:bold;
+      display:none; /* hidden by default */
+      align-items:center; justify-content:center;
       font-size:14px;
     }
+    .clearBtn:hover{background:rgba(0,0,0,.2)}
+    .clearBtn.show{display:flex}
 
     .miniRow{
       display:flex; gap:10px; align-items:center; justify-content:space-between;
@@ -333,7 +357,10 @@
 
     <div id="msg" class="msg"></div>
 
-    <input id="search" class="search" placeholder="Buscar cliente o nota (histórico)..." />
+    <div class="searchWrap">
+      <input id="search" class="search" placeholder="Buscar cliente o nota (histórico)..." />
+      <button id="clearSearch" class="clearBtn" title="Borrar búsqueda">✕</button>
+    </div>
 
     <div class="miniRow">
       <div class="miniHint" id="modeHint">—</div>
@@ -403,6 +430,7 @@
     const tbody = document.getElementById("tbody");
     const batchPill = document.getElementById("batchPill");
     const search = document.getElementById("search");
+    const clearSearch = document.getElementById("clearSearch");
     const modeHint = document.getElementById("modeHint");
     const countBatch = document.getElementById("countBatch");
     const countAll = document.getElementById("countAll");
@@ -760,7 +788,23 @@
     });
 
     // Search
-    search.addEventListener("input", applyFilter);
+    // Search
+    function toggleClearBtn(){
+      if (search.value && search.value.trim().length > 0) clearSearch.classList.add("show");
+      else clearSearch.classList.remove("show");
+    }
+
+    search.addEventListener("input", () => {
+      applyFilter();
+      toggleClearBtn();
+    });
+
+    clearSearch.addEventListener("click", () => {
+      search.value = "";
+      applyFilter();
+      toggleClearBtn();
+      search.focus();
+    });
 
     // Drag & drop
     ["dragenter","dragover"].forEach(ev => {
