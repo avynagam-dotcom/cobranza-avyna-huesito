@@ -13,15 +13,73 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 // ----- Paths
+// ----- Paths configuration (Render Persistent Disk Support)
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
-const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
-const UPLOADS_DIR = path.join(ROOT, "uploads");
+
+// Detectar Persistent Disk de Render
+const RENDER_DISK_PATH = "/var/data/cobranza";
+// Usamos el disco solo si existe físicamente
+const USE_PERSISTENT = fs.existsSync(RENDER_DISK_PATH);
+
+let DATA_DIR, UPLOADS_DIR;
+
+if (USE_PERSISTENT) {
+  console.log(`[System] Usando Persistent Disk en: ${RENDER_DISK_PATH}`);
+  DATA_DIR = path.join(RENDER_DISK_PATH, "data");
+  UPLOADS_DIR = path.join(RENDER_DISK_PATH, "uploads");
+} else {
+  console.log(`[System] Usando almacenamiento local (ephemeral/local)`);
+  DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
+  UPLOADS_DIR = path.join(ROOT, "uploads");
+}
+
 const DB_FILE = path.join(DATA_DIR, "notas.json");
 
-// Ensure folders exist
+// Ensure folders exist (Critical for new locations)
 for (const dir of [DATA_DIR, UPLOADS_DIR]) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+// ----- Migration: Local -> Persistent (Idempotent)
+// Se ejecuta solo si estamos en Render (Persistent) y detectamos archivos locales que no están en el disco
+if (USE_PERSISTENT) {
+  try {
+    const localDataDir = path.join(ROOT, "data");
+    const localUploadsDir = path.join(ROOT, "uploads");
+
+    function migrateFiles(srcDir, destDir) {
+      if (!fs.existsSync(srcDir)) return;
+
+      const files = fs.readdirSync(srcDir);
+      let count = 0;
+
+      for (const file of files) {
+        if (file.startsWith(".")) continue; // Ignorar .DS_Store, etc
+
+        const srcPath = path.join(srcDir, file);
+        const destPath = path.join(destDir, file);
+
+        try {
+          // Solo copiamos si es archivo y NO existe en destino
+          if (fs.statSync(srcPath).isFile() && !fs.existsSync(destPath)) {
+            fs.copyFileSync(srcPath, destPath);
+            count++;
+          }
+        } catch (e) {
+          console.error(`[Migra] Error copiando ${file}:`, e.message);
+        }
+      }
+
+      if (count > 0) console.log(`[Migra] Se migraron ${count} archivos de ${srcDir} a ${destDir}`);
+    }
+
+    migrateFiles(localDataDir, DATA_DIR);
+    migrateFiles(localUploadsDir, UPLOADS_DIR);
+
+  } catch (err) {
+    console.error("[Migra] Fallo en proceso de migración:", err);
+  }
 }
 
 // ----- DB helpers
@@ -51,19 +109,19 @@ function getMexicoDate(date = new Date()) {
   const formatter = new Intl.DateTimeFormat([], options);
   const parts = formatter.formatToParts(date);
   const get = (type) => parts.find(p => p.type === type).value;
-  
-  return new Date( get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+
+  return new Date(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
 }
 
 function getCurrentBatchKey(now = new Date()) {
   // Usar hora de México para determinar el día
   const mxDate = getMexicoDate(now);
-  
+
   // martes más reciente a las 00:00 (hora México)
   // JS: 0=Dom,1=Lun,2=Mar,3=Mié...
   const day = mxDate.getDay();
   const daysSinceTuesday = (day - 2 + 7) % 7;
-  
+
   const d = new Date(mxDate);
   d.setHours(0, 0, 0, 0);
   d.setDate(d.getDate() - daysSinceTuesday);
