@@ -462,6 +462,41 @@ app.post("/api/pago", (req, res) => {
   }
 });
 
+// ----- API: eliminar nota
+app.delete("/api/notas/:id", (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ ok: false, message: "Falta id" });
+
+    const notas = loadDB();
+    const idx = notas.findIndex((n) => String(n.id) === String(id));
+    if (idx === -1) return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+
+    const n = notas[idx];
+
+    // Intentar borrar el archivo físico
+    if (n.filename) {
+      const filePath = path.join(UPLOADS_DIR, n.filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (err) {
+          console.error(`[Delete] Error borrando archivo ${n.filename}:`, err.message);
+        }
+      }
+    }
+
+    // Quitar de la DB
+    notas.splice(idx, 1);
+    saveDB(notas);
+
+    return res.json({ ok: true, message: "Nota eliminada" });
+  } catch (e) {
+    console.error("DELETE ERROR:", e);
+    return res.status(500).json({ ok: false, message: "Error al eliminar nota" });
+  }
+});
+
 // ----- KPIs globales (SOLO ENTREGADAS) ✅ consistencia y utilidades
 app.get("/api/kpis", (req, res) => {
   const notas = loadDB();

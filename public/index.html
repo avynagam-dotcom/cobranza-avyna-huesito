@@ -213,6 +213,17 @@
       white-space: nowrap;
     }
 
+    .btnDanger {
+      border: 0;
+      padding: 9px 14px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #ff7e7e, var(--red));
+      color: #fff;
+      font-weight: 950;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
     .btnGhost {
       border: 1px solid rgba(255, 255, 255, .14);
       padding: 10px 14px;
@@ -680,6 +691,22 @@
     </div>
   </div>
 
+  <!-- Modal: Eliminar -->
+  <div id="overlayDel" class="overlay" role="dialog" aria-modal="true">
+    <div class="modal">
+      <h3 style="color:var(--red)">Eliminar Nota</h3>
+      <div class="desc" id="delDesc"></div>
+      <div class="desc" style="margin-top:10px; font-weight:bold; color:var(--red)">
+        ⚠️ Esta acción es permanente y borrará el PDF.
+      </div>
+
+      <div class="row">
+        <button id="cancelDel" class="btn2" type="button">Cancelar</button>
+        <button id="saveDel" class="btnDanger" type="button">Eliminar permanentemente</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Elements
     const dropZone = document.getElementById("dropZone");
@@ -807,7 +834,12 @@
             <td class="right">${pagado}</td>
             <td class="right">${saldo}</td>
             <td>${statusHtml}</td>
-            <td><button class="btnSmall" data-pay="${n.id}">Pago</button></td>
+            <td class="right">
+              <div style="display:flex;gap:6px;justify-content:flex-end">
+                <button class="btnSmall" data-pay="${n.id}">Pago</button>
+                <button class="btnDanger" data-del="${n.id}">✕</button>
+              </div>
+            </td>
           </tr>
         `;
       }).join("");
@@ -820,6 +852,10 @@
         const id = el.getAttribute("data-ent");
         if (!id) return;
         el.addEventListener("click", () => openEnt(id));
+      });
+
+      tbody.querySelectorAll("[data-del]").forEach(b => {
+        b.addEventListener("click", () => openDel(b.getAttribute("data-del")));
       });
     }
 
@@ -1033,6 +1069,46 @@
       });
 
       closeEnt();
+      await refreshList();
+    });
+
+    // Eliminar modal
+    const overlayDel = document.getElementById("overlayDel");
+    const delDesc = document.getElementById("delDesc");
+    const cancelDel = document.getElementById("cancelDel");
+    const saveDel = document.getElementById("saveDel");
+    let deletingId = null;
+
+    function openDel(id) {
+      deletingId = id;
+      const n = (window.__allNotas || []).find(x => String(x.id) === String(id));
+      const label = n ? (n.cliente || n.originalName || "") : "";
+      delDesc.innerHTML = `Identificaste un error en la nota de: <b>${escapeHtml(label)}</b>?`;
+      overlayDel.classList.add("show");
+    }
+    function closeDel() {
+      overlayDel.classList.remove("show");
+      deletingId = null;
+    }
+    cancelDel.addEventListener("click", closeDel);
+    overlayDel.addEventListener("click", (e) => { if (e.target === overlayDel) closeDel(); });
+
+    saveDel.addEventListener("click", async () => {
+      if (!deletingId) return;
+
+      try {
+        const r = await fetch(`/api/notas/${deletingId}`, { method: "DELETE" });
+        const j = await r.json();
+        if (j.ok) {
+          setMsg("ok", "Nota eliminada correctamente.");
+        } else {
+          setMsg("err", j.message || "Error al eliminar");
+        }
+      } catch (e) {
+        setMsg("err", "Error de conexión al eliminar");
+      }
+
+      closeDel();
       await refreshList();
     });
 
