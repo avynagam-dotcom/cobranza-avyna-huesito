@@ -127,7 +127,8 @@
       font-size: 28px;
       font-weight: 950;
       margin-top: 4px;
-      line-height: 1.05
+      line-height: 1.05;
+      letter-spacing: -1px;
     }
 
     .kpiSub {
@@ -515,6 +516,41 @@
       cursor: pointer;
     }
 
+    /* Group selector for payment methods */
+    .methodGrid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .methodBtn {
+      border: 1px solid rgba(255, 255, 255, .12);
+      border-radius: 10px;
+      padding: 10px 4px;
+      background: rgba(255, 255, 255, .05);
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 900;
+      transition: all .2s;
+    }
+
+    .methodBtn.active {
+      background: rgba(240, 200, 91, .15);
+      border-color: var(--gold);
+      color: var(--gold);
+    }
+
+    .methodBtn i {
+      font-size: 18px;
+      font-style: normal;
+    }
+
     @media (max-width: 980px) {
       .kpiGrid {
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -601,10 +637,10 @@
           <div class="kpiSub">Tu margen ya cobrado</div>
         </div>
 
-        <div class="kpiCard">
-          <div class="kpiTitle">Utilidad por cobrar</div>
-          <div class="kpiValue" id="kpiUtilPorCobrar">—</div>
-          <div class="kpiSub">Tu margen pendiente</div>
+        <div class="kpiCard" style="border-color: rgba(255, 90, 90, 0.3)">
+          <div class="kpiTitle" style="color:var(--red)">Comisiones (Banco)</div>
+          <div class="kpiValue" id="kpiComisiones" style="color:var(--red)">—</div>
+          <div class="kpiSub">Intermediación bancaria (4.06%)</div>
         </div>
       </div>
 
@@ -671,6 +707,22 @@
       <label>Monto pagado</label>
       <input id="payAmount" inputmode="decimal" placeholder="Ej. 500" />
 
+      <label>Método de pago</label>
+      <div class="methodGrid">
+        <button class="methodBtn active" data-mtd="efectivo">
+          <i>💵</i> Efectivo
+        </button>
+        <button class="methodBtn" data-mtd="tarjeta">
+          <i>💳</i> Tarjeta
+        </button>
+        <button class="methodBtn" data-mtd="transferencia">
+          <i>🏦</i> Transf.
+        </button>
+      </div>
+      <div id="feeNote" class="statusHint" style="margin-top:8px; display:none">
+        ⚠️ Tarjeta: Comisión de <b>4.06%</b> será descontada de tu utilidad.
+      </div>
+
       <div class="row">
         <button id="cancelPay" class="btn2" type="button">Cancelar</button>
         <button id="savePay" class="btn3" type="button">Guardar</button>
@@ -729,6 +781,7 @@
     const kpiPorCobrar = document.getElementById("kpiPorCobrar");
     const kpiUtilCobrada = document.getElementById("kpiUtilCobrada");
     const kpiUtilPorCobrar = document.getElementById("kpiUtilPorCobrar");
+    const kpiComisiones = document.getElementById("kpiComisiones");
     const kpiBar = document.getElementById("kpiBar");
 
     // Actions
@@ -737,12 +790,20 @@
     const reportBtn = document.getElementById("reportBtn");
 
     // Modal Pago
-    const overlayPay = document.getElementById("overlayPay");
-    const payClient = document.getElementById("payClient");
-    const payAmount = document.getElementById("payAmount");
-    const cancelPay = document.getElementById("cancelPay");
     const savePay = document.getElementById("savePay");
+    const methodBtns = document.querySelectorAll(".methodBtn");
+    const feeNote = document.getElementById("feeNote");
     let payingId = null;
+    let selectedMethod = "efectivo";
+
+    methodBtns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        methodBtns.forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        selectedMethod = btn.getAttribute("data-mtd");
+        feeNote.style.display = selectedMethod === "tarjeta" ? "block" : "none";
+      });
+    });
 
     // Modal Entregado
     const overlayEnt = document.getElementById("overlayEnt");
@@ -933,6 +994,7 @@
 
         kpiUtilCobrada.textContent = money(j.utilidadCobrada || 0);
         kpiUtilPorCobrar.textContent = money(j.utilidadPorCobrar || 0);
+        kpiComisiones.textContent = money(j.totalComisiones || 0);
 
         const w = Math.max(0, Math.min(100, Math.round(pct * 100)));
         kpiBar.style.width = w + "%";
@@ -1013,6 +1075,13 @@
       const n = (window.__allNotas || []).find(x => String(x.id) === String(id));
       payClient.textContent = n ? (n.cliente || n.originalName || "") : "";
       payAmount.value = "";
+
+      // Reset methods
+      selectedMethod = "efectivo";
+      methodBtns.forEach(b => b.classList.remove("active"));
+      document.querySelector('[data-mtd="efectivo"]').classList.add("active");
+      feeNote.style.display = "none";
+
       overlayPay.classList.add("show");
       payAmount.focus();
     }
@@ -1032,7 +1101,7 @@
       await fetch("/api/pago", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: payingId, monto: val })
+        body: JSON.stringify({ id: payingId, monto: val, metodo: selectedMethod })
       });
 
       closePay();

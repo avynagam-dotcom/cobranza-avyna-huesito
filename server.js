@@ -12,6 +12,8 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
+const CARD_FEE_FACTOR = 0.0406; // 3.5% + 16% IVA (3.5 * 1.16 = 4.06%)
+
 // ----- Paths
 // ----- Paths configuration (Render Persistent Disk Support)
 const ROOT = __dirname;
@@ -390,6 +392,7 @@ app.post("/api/upload", upload.single("pdf"), async (req, res) => {
       dueAt: null,
       firstPaymentAt: null,
       uploadedAt,
+      pagos: [] // historial de pagos
     };
 
     notas.push(nota);
@@ -434,8 +437,9 @@ app.post("/api/entregar", (req, res) => {
 // ----- API: registrar pago
 app.post("/api/pago", (req, res) => {
   try {
-    const { id, monto } = req.body || {};
+    const { id, monto, metodo } = req.body || {};
     const val = Number(monto);
+    const mtd = metodo || "efectivo"; // por defecto efectivo
 
     if (!id || !Number.isFinite(val) || val <= 0) {
       return res.status(400).json({ ok: false, message: "Datos inválidos" });
@@ -446,10 +450,38 @@ app.post("/api/pago", (req, res) => {
     if (idx === -1) return res.status(404).json({ ok: false, message: "Nota no encontrada" });
 
     const n = notas[idx];
-    n.pagado = Number(n.pagado || 0) + val;
+
+    // Cálculo de comisión si es tarjeta
+    let comision = 0;
+    if (mtd === "tarjeta") {
+      comision = val * CARD_FEE_FACTOR;
+    }
+
+    // Inicializar array de pagos si no existe (retrocompatibilidad)
+    if (!n.pagos) n.pagos = [];
+
+    // Si ya tenía un valor en 'pagado' pero no en 'pagos', lo movemos como pago inicial de efectivo
+    if (n.pagado > 0 && n.pagos.length === 0) {
+      n.pagos.push({
+        monto: n.pagado,
+        metodo: "efectivo",
+        comision: 0,
+        fecha: n.firstPaymentAt || n.uploadedAt
+      });
+    }
+
+    const nuevoPago = {
+      monto: val,
+      metodo: mtd,
+      comision: Number(comision.toFixed(2)),
+      fecha: new Date().toISOString()
+    };
+
+    n.pagos.push(nuevoPago);
+    n.pagado = Number((n.pagado || 0) + val);
 
     if (n.deliveredAt && !n.firstPaymentAt) {
-      n.firstPaymentAt = new Date().toISOString();
+      n.firstPaymentAt = nuevoPago.fecha;
     }
 
     notas[idx] = n;
@@ -504,6 +536,7 @@ app.get("/api/kpis", (req, res) => {
 
   let totalCobrable = 0;
   let totalCobrado = 0;
+  let totalComisiones = 0;
 
   for (const n of entregadas) {
     const total = typeof n.total === "number" && Number.isFinite(n.total) ? n.total : 0;
@@ -511,13 +544,22 @@ app.get("/api/kpis", (req, res) => {
 
     totalCobrable += total;
     totalCobrado += Math.min(pagado, total);
+
+    // Sumar comisiones bancarias
+    if (n.pagos) {
+      for (const p of n.pagos) {
+        totalComisiones += (p.comision || 0);
+      }
+    }
   }
 
   // ✅ saldo = cobrable - cobrado (evita discrepancias)
   const totalSaldo = Math.max(totalCobrable - totalCobrado, 0);
   const pctCobranza = totalCobrable > 0 ? totalCobrado / totalCobrable : 0;
 
-  const utilidadCobrada = totalCobrado * 0.4;
+  // Utilidad NETA (restando comisiones bancarias del 40% de utilidad bruta)
+  const utilidadCobradaBruta = totalCobrado * 0.4;
+  const utilidadCobrada = Math.max(utilidadCobradaBruta - totalComisiones, 0);
   const utilidadPorCobrar = totalSaldo * 0.4;
 
   res.json({
@@ -528,6 +570,7 @@ app.get("/api/kpis", (req, res) => {
     pctCobranza,
     utilidadCobrada,
     utilidadPorCobrar,
+    totalComisiones: Number(totalComisiones.toFixed(2)),
   });
 });
 
