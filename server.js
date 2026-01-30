@@ -14,6 +14,8 @@ app.use(express.json({ limit: "2mb" }));
 
 const CARD_FEE_FACTOR = 0.0406; // 3.5% + 16% IVA (3.5 * 1.16 = 4.06%)
 
+const { ensureDir, auditLog, writeDatabaseAtomic } = require("./utils/persistence");
+
 // ----- Paths
 // ----- Paths configuration (Render Persistent Disk Support)
 const ROOT = __dirname;
@@ -39,7 +41,7 @@ if (USE_PERSISTENT) {
 const DB_FILE = path.join(DATA_DIR, "notas.json");
 
 // ----- Backup Automático cada 24h a R2
-const R2_ENABLED = process.env.R2_ENDPOINT && process.env.R2_ACCESS_KEY_ID;
+const R2_ENABLED = process.env.R2_ENDPOINT && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_BUCKET;
 if (R2_ENABLED) {
   const backup = require("./scripts/backup");
   // Ejecutar uno al iniciar (después de 30s para no saturar el arranque)
@@ -53,9 +55,9 @@ if (R2_ENABLED) {
 }
 
 // Ensure folders exist (Critical for new locations)
-for (const dir of [DATA_DIR, UPLOADS_DIR]) {
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
+ensureDir(DATA_DIR);
+ensureDir(UPLOADS_DIR);
+
 
 // ----- Migration: Local -> Persistent (Idempotent)
 // Se ejecuta solo si estamos en Render (Persistent) y detectamos archivos locales que no están en el disco
@@ -98,18 +100,27 @@ if (USE_PERSISTENT) {
   }
 }
 
-// ----- DB helpers
+// ----- DB helpers (Atomic & Audited)
 function loadDB() {
   try {
     const raw = fs.readFileSync(DB_FILE, "utf8");
     const data = JSON.parse(raw);
     return Array.isArray(data) ? data : [];
-  } catch {
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error("[CRITICAL] Failed to load DB:", err);
+    }
     return [];
   }
 }
-function saveDB(notas) {
-  fs.writeFileSync(DB_FILE, JSON.stringify(notas, null, 2), "utf8");
+
+// Wrapper to match existing calls but inject DATA_DIR
+function auditLogWrapper(action, status, meta = {}) {
+  auditLog(DATA_DIR, action, status, meta);
+}
+
+function writeDatabaseAtomicWrapper(notas) {
+  return writeDatabaseAtomic(DB_FILE, notas, DATA_DIR);
 }
 
 // ----- Batch (miércoles 12:00)
@@ -310,157 +321,190 @@ app.get("/api/notas", (req, res) => {
 });
 
 // ----- API: subir PDF
+// ----- API: subir PDF (Data Shielding)
 app.post("/api/upload", upload.single("pdf"), async (req, res) => {
-  try {
-    const batchKey = getCurrentBatchKey();
+  const ACTION = "UPLOAD_PDF";
+  const reqId = crypto.randomUUID();
 
+  try {
+    // 1. Edge Validation
     if (!req.file || !req.file.buffer) {
+      auditLog(ACTION, "BLOCKED", { reqId, reason: "No PDF buffer" });
       return res.status(400).json({ ok: false, message: "No se recibió PDF" });
     }
-
     const originalName = req.file.originalname || "nota.pdf";
+    const batchKey = getCurrentBatchKey();
+
+    auditLog(ACTION, "ATTEMPT", { reqId, originalName, batchKey });
+
+    // 2. Process (Read-Modify-Write Lock simulation)
     const notas = loadDB();
 
-    // ✅ Regla nueva:
-    // Si hay una nota con mismo nombre EN EL BATCH:
-    // - si NO está entregada => sustituir (mismo id, mismo filename, sobreescribe PDF y actualiza cliente/total)
-    // - si YA está entregada => bloquear (duplicado)
     const existingIdx = notas.findIndex(
       (n) =>
         String(n.batchKey) === String(batchKey) &&
         String(n.originalName || "").toLowerCase() === String(originalName).toLowerCase()
     );
 
-    // Parse PDF (siempre parseamos porque para sustituir necesitamos nuevo total/cliente)
     const parsed = await pdfParse(req.file.buffer);
     const text = parsed && parsed.text ? parsed.text : "";
     const cliente = extractClienteFromText(text) || null;
     const total = extractTotalFromText(text);
     const uploadedAt = new Date().toISOString();
 
+    let responseNota = null;
+
     if (existingIdx !== -1) {
       const ex = notas[existingIdx];
-
-      // Si ya está entregada: NO se sustituye
+      // Block duplicate delivered
       if (ex.deliveredAt) {
+        auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Duplicate delivered", notaId: ex.id });
         return res.json({ ok: false, duplicate: true, message: "Nota duplicada (ya entregada)" });
       }
 
-      // ✅ Sustituir (pre-entrega)
-      // Mantener: id, pagado, deliveredAt(null), dueAt(null), firstPaymentAt, batchKey
-      // Actualizar: cliente, total, uploadedAt
+      // Update existing
       ex.cliente = cliente;
       ex.total = typeof total === "number" && Number.isFinite(total) ? total : null;
       ex.uploadedAt = uploadedAt;
 
-      // Guardar / sobreescribir el PDF usando el mismo filename de esa nota
-      // (Esto mantiene tu historial limpio y evita crear 2 notas)
-      const filename = ex.filename || `${batchKey}__${ex.id}__${originalName}`.replace(
-        /[^\w.\-() \u00C0-\u017F]/g,
-        "_"
-      );
+      const filename = ex.filename || `${batchKey}__${ex.id}__${originalName}`.replace(/[^\w.\-() \u00C0-\u017F]/g, "_");
       ex.filename = filename;
 
       const filePath = path.join(UPLOADS_DIR, filename);
       fs.writeFileSync(filePath, req.file.buffer);
 
       notas[existingIdx] = ex;
-      saveDB(notas);
+      responseNota = ex;
+    } else {
+      // Create new
+      const id = crypto.randomUUID();
+      const safeName = `${batchKey}__${id}__${originalName}`.replace(/[^\w.\-() \u00C0-\u017F]/g, "_");
+      const filePath = path.join(UPLOADS_DIR, safeName);
+      fs.writeFileSync(filePath, req.file.buffer);
 
-      return res.json({ ok: true, replaced: true, nota: { ...ex, ...computeCredito(ex) } });
+      const nota = {
+        id,
+        batchKey,
+        originalName,
+        filename: safeName,
+        cliente,
+        total: typeof total === "number" && Number.isFinite(total) ? total : null,
+        pagado: 0,
+        deliveredAt: null,
+        dueAt: null,
+        firstPaymentAt: null,
+        uploadedAt,
+        pagos: []
+      };
+      notas.push(nota);
+      responseNota = nota;
     }
 
-    // ✅ Nueva nota (no existe)
-    const id = crypto.randomUUID();
+    // 3. Atomic Persistence
+    const success = writeDatabaseAtomicWrapper(notas);
+    if (!success) {
+      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+      return res.status(500).json({ ok: false, message: "Error interno de persistencia" });
+    }
 
-    const safeName = `${batchKey}__${id}__${originalName}`.replace(
-      /[^\w.\-() \u00C0-\u017F]/g,
-      "_"
-    );
-    const filePath = path.join(UPLOADS_DIR, safeName);
-    fs.writeFileSync(filePath, req.file.buffer);
+    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: responseNota.id });
+    return res.json({ ok: true, nota: { ...responseNota, ...computeCredito(responseNota) } });
 
-    const nota = {
-      id,
-      batchKey,
-      originalName,
-      filename: safeName,
-      cliente,
-      total: typeof total === "number" && Number.isFinite(total) ? total : null,
-      pagado: 0,
-      deliveredAt: null,
-      dueAt: null,
-      firstPaymentAt: null,
-      uploadedAt,
-      pagos: [] // historial de pagos
-    };
-
-    notas.push(nota);
-    saveDB(notas);
-
-    return res.json({ ok: true, nota: { ...nota, ...computeCredito(nota) } });
   } catch (e) {
+    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message, stack: e.stack });
     console.error("UPLOAD ERROR:", e);
-    return res.status(500).json({ ok: false, message: "Error al subir PDF" });
+    return res.status(500).json({ ok: false, message: "Error procesando PDF" });
   }
 });
 
 // ----- API: marcar ENTREGADO (inicio crédito)
+// ----- API: marcar ENTREGADO (inicio crédito)
 app.post("/api/entregar", (req, res) => {
+  const ACTION = "MARK_DELIVERED";
+  const reqId = crypto.randomUUID();
+
   try {
     const { id } = req.body || {};
-    if (!id) return res.status(400).json({ ok: false, message: "Falta id" });
-
-    const notas = loadDB();
-    const idx = notas.findIndex((n) => String(n.id) === String(id));
-    if (idx === -1) return res.status(404).json({ ok: false, message: "Nota no encontrada" });
-
-    const n = notas[idx];
-
-    if (!n.deliveredAt) {
-      const now = new Date();
-      n.deliveredAt = iso(now);
-      // ✅ 15 días (como quedamos)
-      n.dueAt = iso(addDays(now, 15));
+    if (!id) {
+      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Missing ID" });
+      return res.status(400).json({ ok: false, message: "Falta id" });
     }
 
-    notas[idx] = n;
-    saveDB(notas);
+    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id });
 
+    // Transaction start
+    const notas = loadDB();
+    const idx = notas.findIndex((n) => String(n.id) === String(id));
+    if (idx === -1) {
+      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+      return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+    }
+
+    const n = notas[idx];
+    if (n.deliveredAt) {
+      // Idempotency: log but don't error? Or just return ok?
+      // Let's treat as success but no-op
+      auditLogWrapper(ACTION, "NO_OP", { reqId, reason: "Already delivered", notaId: id });
+    } else {
+      const now = new Date();
+      n.deliveredAt = iso(now);
+      n.dueAt = iso(addDays(now, 15));
+
+      notas[idx] = n;
+
+      // Atomic Commit
+      if (!writeDatabaseAtomicWrapper(notas)) {
+        auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+        return res.status(500).json({ ok: false, message: "DB Error" });
+      }
+    }
+
+    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id });
     return res.json({ ok: true, nota: { ...n, ...computeCredito(n) } });
+
   } catch (e) {
+    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
     console.error("ENTREGAR ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al marcar entregado" });
   }
 });
 
 // ----- API: registrar pago
+// ----- API: registrar pago
 app.post("/api/pago", (req, res) => {
+  const ACTION = "REGISTER_PAYMENT";
+  const reqId = crypto.randomUUID();
+
   try {
     const { id, monto, metodo } = req.body || {};
     const val = Number(monto);
-    const mtd = metodo || "efectivo"; // por defecto efectivo
+    const mtd = metodo || "efectivo";
 
+    // Edge Validation
     if (!id || !Number.isFinite(val) || val <= 0) {
+      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Invalid Payload", payload: req.body });
       return res.status(400).json({ ok: false, message: "Datos inválidos" });
     }
 
+    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id, monto: val, metodo: mtd });
+
     const notas = loadDB();
     const idx = notas.findIndex((n) => String(n.id) === String(id));
-    if (idx === -1) return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+    if (idx === -1) {
+      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+      return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+    }
 
     const n = notas[idx];
 
-    // Cálculo de comisión si es tarjeta
     let comision = 0;
     if (mtd === "tarjeta") {
       comision = val * CARD_FEE_FACTOR;
     }
 
-    // Inicializar array de pagos si no existe (retrocompatibilidad)
     if (!n.pagos) n.pagos = [];
 
-    // Si ya tenía un valor en 'pagado' pero no en 'pagos', lo movemos como pago inicial de efectivo
+    // Migration logic safe-guard
     if (n.pagado > 0 && n.pagos.length === 0) {
       n.pagos.push({
         monto: n.pagado,
@@ -485,24 +529,41 @@ app.post("/api/pago", (req, res) => {
     }
 
     notas[idx] = n;
-    saveDB(notas);
 
+    // Atomic Commit
+    if (!writeDatabaseAtomicWrapper(notas)) {
+      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+      return res.status(500).json({ ok: false, message: "Error interno" });
+    }
+
+    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id, nuevoSaldo: computeCredito(n).saldo });
     return res.json({ ok: true, nota: { ...n, ...computeCredito(n) } });
+
   } catch (e) {
+    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
     console.error("PAGO ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al registrar pago" });
   }
 });
 
 // ----- API: eliminar nota
+// ----- API: eliminar nota
 app.delete("/api/notas/:id", (req, res) => {
+  const ACTION = "DELETE_NOTA";
+  const reqId = crypto.randomUUID();
+
   try {
     const { id } = req.params;
     if (!id) return res.status(400).json({ ok: false, message: "Falta id" });
 
+    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id });
+
     const notas = loadDB();
     const idx = notas.findIndex((n) => String(n.id) === String(id));
-    if (idx === -1) return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+    if (idx === -1) {
+      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Not Found" });
+      return res.status(404).json({ ok: false, message: "Nota no encontrada" });
+    }
 
     const n = notas[idx];
 
@@ -514,16 +575,24 @@ app.delete("/api/notas/:id", (req, res) => {
           fs.unlinkSync(filePath);
         } catch (err) {
           console.error(`[Delete] Error borrando archivo ${n.filename}:`, err.message);
+          // Non-critical (?) - Log it
+          auditLogWrapper(ACTION, "WARNING", { reqId, warning: "File unlink failed", file: n.filename });
         }
       }
     }
 
     // Quitar de la DB
     notas.splice(idx, 1);
-    saveDB(notas);
 
+    if (!writeDatabaseAtomicWrapper(notas)) {
+      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+      return res.status(500).json({ ok: false, message: "Error interno" });
+    }
+
+    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id });
     return res.json({ ok: true, message: "Nota eliminada" });
   } catch (e) {
+    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
     console.error("DELETE ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al eliminar nota" });
   }
