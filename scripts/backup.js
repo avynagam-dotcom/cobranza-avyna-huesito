@@ -12,10 +12,27 @@ async function runBackup() {
     const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
     const R2_BUCKET = process.env.R2_BUCKET;
 
-    // Carpeta de datos a respaldar (la del disco persistente)
-    const DATA_DIR = "/var/data/cobranza";
-    // Si no existe el disco persistente, intentamos la local (desarrollo)
-    const SOURCE_DIR = fs.existsSync(DATA_DIR) ? DATA_DIR : path.join(__dirname, "..");
+    // Carpeta de datos a respaldar
+    // Prioridad: 1. ENV, 2. Render Persistent Disk, 3. Local Fallback
+    const RENDER_DISK_PATH = "/var/data/cobranza";
+    let SOURCE_DIR;
+
+    if (process.env.DATA_DIR) {
+        SOURCE_DIR = path.resolve(process.env.DATA_DIR).replace(/\/data\/?$/, ""); // Backup parent of data/uploads usually, or just use logic below
+        // Actually backup.js backs up "data" and "uploads" DIRECTORIES inside SOURCE_DIR.
+        // server.js sets DATA_DIR to .../data. 
+        // If process.env.DATA_DIR is .../data, we need the parent.
+        // Let's stick to the logic: SOURCE_DIR is where "data" and "uploads" live.
+        if (process.env.DATA_DIR.endsWith("data")) {
+            SOURCE_DIR = path.dirname(process.env.DATA_DIR);
+        } else {
+            SOURCE_DIR = process.env.DATA_DIR;
+        }
+    } else if (fs.existsSync(RENDER_DISK_PATH)) {
+        SOURCE_DIR = RENDER_DISK_PATH;
+    } else {
+        SOURCE_DIR = path.join(__dirname, "..");
+    }
 
     if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
         throw new Error("Faltan variables de entorno para el backup (R2)");

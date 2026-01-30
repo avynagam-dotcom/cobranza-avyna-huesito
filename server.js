@@ -114,14 +114,8 @@ function loadDB() {
   }
 }
 
-// Wrapper to match existing calls but inject DATA_DIR
-function auditLogWrapper(action, status, meta = {}) {
-  auditLog(DATA_DIR, action, status, meta);
-}
-
-function writeDatabaseAtomicWrapper(notas) {
-  return writeDatabaseAtomic(DB_FILE, notas, DATA_DIR);
-}
+// Direct usage of persistence utils
+// Wrappers removed for clarity and lack of zombie code
 
 // ----- Batch (miércoles 12:00)
 function pad2(n) {
@@ -329,13 +323,15 @@ app.post("/api/upload", upload.single("pdf"), async (req, res) => {
   try {
     // 1. Edge Validation
     if (!req.file || !req.file.buffer) {
-      auditLog(ACTION, "BLOCKED", { reqId, reason: "No PDF buffer" });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "No PDF buffer" });
+
       return res.status(400).json({ ok: false, message: "No se recibió PDF" });
     }
     const originalName = req.file.originalname || "nota.pdf";
     const batchKey = getCurrentBatchKey();
 
-    auditLog(ACTION, "ATTEMPT", { reqId, originalName, batchKey });
+    auditLog(DATA_DIR, ACTION, "ATTEMPT", { reqId, originalName, batchKey });
+
 
     // 2. Process (Read-Modify-Write Lock simulation)
     const notas = loadDB();
@@ -358,7 +354,8 @@ app.post("/api/upload", upload.single("pdf"), async (req, res) => {
       const ex = notas[existingIdx];
       // Block duplicate delivered
       if (ex.deliveredAt) {
-        auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Duplicate delivered", notaId: ex.id });
+        auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Duplicate delivered", notaId: ex.id });
+
         return res.json({ ok: false, duplicate: true, message: "Nota duplicada (ya entregada)" });
       }
 
@@ -401,17 +398,21 @@ app.post("/api/upload", upload.single("pdf"), async (req, res) => {
     }
 
     // 3. Atomic Persistence
-    const success = writeDatabaseAtomicWrapper(notas);
+    const success = writeDatabaseAtomic(DB_FILE, notas, DATA_DIR);
+
     if (!success) {
-      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+      auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+
       return res.status(500).json({ ok: false, message: "Error interno de persistencia" });
     }
 
-    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: responseNota.id });
+    auditLog(DATA_DIR, ACTION, "SUCCESS", { reqId, notaId: responseNota.id });
+
     return res.json({ ok: true, nota: { ...responseNota, ...computeCredito(responseNota) } });
 
   } catch (e) {
-    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message, stack: e.stack });
+    auditLog(DATA_DIR, ACTION, "CRITICAL_ERROR", { reqId, error: e.message, stack: e.stack });
+
     console.error("UPLOAD ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error procesando PDF" });
   }
@@ -426,17 +427,20 @@ app.post("/api/entregar", (req, res) => {
   try {
     const { id } = req.body || {};
     if (!id) {
-      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Missing ID" });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Missing ID" });
+
       return res.status(400).json({ ok: false, message: "Falta id" });
     }
 
-    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id });
+    auditLog(DATA_DIR, ACTION, "ATTEMPT", { reqId, notaId: id });
+
 
     // Transaction start
     const notas = loadDB();
     const idx = notas.findIndex((n) => String(n.id) === String(id));
     if (idx === -1) {
-      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+
       return res.status(404).json({ ok: false, message: "Nota no encontrada" });
     }
 
@@ -444,7 +448,8 @@ app.post("/api/entregar", (req, res) => {
     if (n.deliveredAt) {
       // Idempotency: log but don't error? Or just return ok?
       // Let's treat as success but no-op
-      auditLogWrapper(ACTION, "NO_OP", { reqId, reason: "Already delivered", notaId: id });
+      auditLog(DATA_DIR, ACTION, "NO_OP", { reqId, reason: "Already delivered", notaId: id });
+
     } else {
       const now = new Date();
       n.deliveredAt = iso(now);
@@ -453,17 +458,21 @@ app.post("/api/entregar", (req, res) => {
       notas[idx] = n;
 
       // Atomic Commit
-      if (!writeDatabaseAtomicWrapper(notas)) {
-        auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+      if (!writeDatabaseAtomic(DB_FILE, notas, DATA_DIR)) {
+
+        auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk write failed" });
+
         return res.status(500).json({ ok: false, message: "DB Error" });
       }
     }
 
-    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id });
+    auditLog(DATA_DIR, ACTION, "SUCCESS", { reqId, notaId: id });
+
     return res.json({ ok: true, nota: { ...n, ...computeCredito(n) } });
 
   } catch (e) {
-    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+    auditLog(DATA_DIR, ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+
     console.error("ENTREGAR ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al marcar entregado" });
   }
@@ -482,16 +491,19 @@ app.post("/api/pago", (req, res) => {
 
     // Edge Validation
     if (!id || !Number.isFinite(val) || val <= 0) {
-      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Invalid Payload", payload: req.body });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Invalid Payload", payload: req.body });
+
       return res.status(400).json({ ok: false, message: "Datos inválidos" });
     }
 
-    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id, monto: val, metodo: mtd });
+    auditLog(DATA_DIR, ACTION, "ATTEMPT", { reqId, notaId: id, monto: val, metodo: mtd });
+
 
     const notas = loadDB();
     const idx = notas.findIndex((n) => String(n.id) === String(id));
     if (idx === -1) {
-      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Nota Not Found", notaId: id });
+
       return res.status(404).json({ ok: false, message: "Nota no encontrada" });
     }
 
@@ -532,15 +544,18 @@ app.post("/api/pago", (req, res) => {
 
     // Atomic Commit
     if (!writeDatabaseAtomicWrapper(notas)) {
-      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+      auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+
       return res.status(500).json({ ok: false, message: "Error interno" });
     }
 
-    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id, nuevoSaldo: computeCredito(n).saldo });
+    auditLog(DATA_DIR, ACTION, "SUCCESS", { reqId, notaId: id, nuevoSaldo: computeCredito(n).saldo });
+
     return res.json({ ok: true, nota: { ...n, ...computeCredito(n) } });
 
   } catch (e) {
-    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+    auditLog(DATA_DIR, ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+
     console.error("PAGO ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al registrar pago" });
   }
@@ -556,12 +571,14 @@ app.delete("/api/notas/:id", (req, res) => {
     const { id } = req.params;
     if (!id) return res.status(400).json({ ok: false, message: "Falta id" });
 
-    auditLogWrapper(ACTION, "ATTEMPT", { reqId, notaId: id });
+    auditLog(DATA_DIR, ACTION, "ATTEMPT", { reqId, notaId: id });
+
 
     const notas = loadDB();
     const idx = notas.findIndex((n) => String(n.id) === String(id));
     if (idx === -1) {
-      auditLogWrapper(ACTION, "BLOCKED", { reqId, reason: "Not Found" });
+      auditLog(DATA_DIR, ACTION, "BLOCKED", { reqId, reason: "Not Found" });
+
       return res.status(404).json({ ok: false, message: "Nota no encontrada" });
     }
 
@@ -576,7 +593,8 @@ app.delete("/api/notas/:id", (req, res) => {
         } catch (err) {
           console.error(`[Delete] Error borrando archivo ${n.filename}:`, err.message);
           // Non-critical (?) - Log it
-          auditLogWrapper(ACTION, "WARNING", { reqId, warning: "File unlink failed", file: n.filename });
+          auditLog(DATA_DIR, ACTION, "WARNING", { reqId, warning: "File unlink failed", file: n.filename });
+
         }
       }
     }
@@ -585,14 +603,17 @@ app.delete("/api/notas/:id", (req, res) => {
     notas.splice(idx, 1);
 
     if (!writeDatabaseAtomicWrapper(notas)) {
-      auditLogWrapper(ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+      auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+
       return res.status(500).json({ ok: false, message: "Error interno" });
     }
 
-    auditLogWrapper(ACTION, "SUCCESS", { reqId, notaId: id });
+    auditLog(DATA_DIR, ACTION, "SUCCESS", { reqId, notaId: id });
+
     return res.json({ ok: true, message: "Nota eliminada" });
   } catch (e) {
-    auditLogWrapper(ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+    auditLog(DATA_DIR, ACTION, "CRITICAL_ERROR", { reqId, error: e.message });
+
     console.error("DELETE ERROR:", e);
     return res.status(500).json({ ok: false, message: "Error al eliminar nota" });
   }
