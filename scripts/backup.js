@@ -5,58 +5,57 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// Validado -> Huesito
 async function runBackup() {
-    const SYSTEM_NAME = process.env.SYSTEM_NAME || "avyna-desconocido";
+    const PREFIX = "huesito";
     const R2_ENDPOINT = process.env.R2_ENDPOINT;
     const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
     const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
     const R2_BUCKET = process.env.R2_BUCKET;
 
-    // Carpeta de datos a respaldar
-    // Prioridad: 1. ENV, 2. Render Persistent Disk, 3. Local Fallback
-    const RENDER_DISK_PATH = "/var/data/cobranza";
-    let SOURCE_DIR;
+    // Usar la variable de entorno validada por persistence.js
+    const DATA_DIR = process.env.DATA_DIR;
 
-    if (process.env.DATA_DIR) {
-        SOURCE_DIR = path.resolve(process.env.DATA_DIR).replace(/\/data\/?$/, ""); // Backup parent of data/uploads usually, or just use logic below
-        // Actually backup.js backs up "data" and "uploads" DIRECTORIES inside SOURCE_DIR.
-        // server.js sets DATA_DIR to .../data. 
-        // If process.env.DATA_DIR is .../data, we need the parent.
-        // Let's stick to the logic: SOURCE_DIR is where "data" and "uploads" live.
-        if (process.env.DATA_DIR.endsWith("data")) {
-            SOURCE_DIR = path.dirname(process.env.DATA_DIR);
-        } else {
-            SOURCE_DIR = process.env.DATA_DIR;
-        }
-    } else if (fs.existsSync(RENDER_DISK_PATH)) {
-        SOURCE_DIR = RENDER_DISK_PATH;
-    } else {
-        SOURCE_DIR = path.join(__dirname, "..");
+    if (!DATA_DIR) {
+        console.error("[Backup] ❌ ERROR: process.env.DATA_DIR no está definido.");
+        return;
     }
 
     if (!R2_ENDPOINT || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY || !R2_BUCKET) {
-        throw new Error("Faltan variables de entorno para el backup (R2)");
+        console.warn("[Backup] ⚠️ Faltan credenciales R2. Saltando backup.");
+        return;
     }
 
     const date = new Date().toISOString().split("T")[0];
-    const filename = `backup-${SYSTEM_NAME}-${date}.tar.gz`;
+    const filename = `backup-${date}.tar.gz`;
+    const key = `${PREFIX}/${filename}`;
     const archivePath = path.join("/tmp", filename);
 
     try {
-        console.log(`📦 Creando archivo comprimido: ${filename}...`);
-        // Comprimimos data y uploads si existen en el SOURCE_DIR
-        const targets = [];
-        if (fs.existsSync(path.join(SOURCE_DIR, "data"))) targets.push("data");
-        if (fs.existsSync(path.join(SOURCE_DIR, "uploads"))) targets.push("uploads");
+        console.log(`[Backup] ⏳ Iniciando respaldo para: ${PREFIX}`);
+        console.log(`[Backup] 📂 Origen (DATA_DIR): ${DATA_DIR}`);
 
-        if (targets.length === 0) {
-            console.log("⚠️ No hay carpetas 'data' o 'uploads' para respaldar.");
+        // Verificamos si existe la carpeta
+        if (!fs.existsSync(DATA_DIR)) {
+            console.warn(`[Backup] ⚠️ La carpeta ${DATA_DIR} no existe. Nada que respaldar.`);
             return;
         }
 
-        execSync(`tar -czf ${archivePath} -C ${SOURCE_DIR} ${targets.join(" ")}`);
+        console.log(`[Backup] 📦 Comprimiendo contenido de ${DATA_DIR} en ${archivePath}`);
 
-        console.log(`🚀 Subiendo a Cloudflare R2...`);
+        const parentDir = path.dirname(DATA_DIR);
+        const dataDirName = path.basename(DATA_DIR);
+        const uploadsPath = path.join(parentDir, "uploads");
+
+        let targets = [dataDirName];
+        if (fs.existsSync(uploadsPath)) {
+            targets.push("uploads");
+        }
+
+        // Logic: tar -czf archive -C parentDir data uploads
+        execSync(`tar -czf ${archivePath} -C ${parentDir} ${targets.join(" ")}`);
+
+        console.log(`[Backup] 🚀 Subiendo a Cloudflare R2: ${R2_BUCKET} -> ${key}`);
         const s3 = new S3Client({
             region: "auto",
             endpoint: R2_ENDPOINT,
@@ -69,24 +68,28 @@ async function runBackup() {
         const fileBuffer = fs.readFileSync(archivePath);
         await s3.send(new PutObjectCommand({
             Bucket: R2_BUCKET,
-            Key: `${SYSTEM_NAME}/${filename}`, // Organizado por carpeta de sistema
+            Key: key,
             Body: fileBuffer,
             ContentType: "application/gzip",
         }));
 
-        console.log(`✅ Backup completado exitosamente: ${SYSTEM_NAME}/${filename}`);
-
-        // Limpieza
-        fs.unlinkSync(archivePath);
+        console.log(`[Backup] ✅ ÉXITO. Backup guardado: ${key}`);
 
     } catch (error) {
-        console.error("❌ Error durante el backup:", error);
+        console.error(`[Backup] ❌ ERROR CRÍTICO:`, error.message);
         throw error;
+    } finally {
+        if (fs.existsSync(archivePath)) {
+            fs.unlinkSync(archivePath);
+        }
     }
 }
 
 module.exports = runBackup;
 
 if (require.main === module) {
-    runBackup().catch(() => process.exit(1));
+    runBackup().catch((e) => {
+        console.error("Manual Backup Failed:", e.message);
+        process.exit(1);
+    });
 }
