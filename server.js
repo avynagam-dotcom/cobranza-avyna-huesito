@@ -295,16 +295,153 @@ const upload = multer({
 // ----- Static
 app.use(express.static(PUBLIC_DIR));
 
+// ... (previous imports)
+
+// ----- Report Status Persistence
+const STATUS_FILE = path.join(DATA_DIR, "status.json");
+function loadStatus() {
+  try {
+    if (!fs.existsSync(STATUS_FILE)) return {};
+    return JSON.parse(fs.readFileSync(STATUS_FILE, "utf8"));
+  } catch (e) { return {}; }
+}
+function saveStatus(data) {
+  try {
+    fs.writeFileSync(STATUS_FILE, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error("Error saving status:", e);
+  }
+}
+
+// ----- VIP Logic
+function computeVipClients(notas) {
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
+  const FEB_START = new Date("2026-02-01T00:00:00Z");
+
+  const clients = {};
+
+  // 1. Group by client
+  for (const n of notas) {
+    if (!n.cliente) continue;
+
+    // Normalize client name (simple version)
+    const cName = n.cliente.trim();
+    if (!clients[cName]) {
+      clients[cName] = {
+        totalVol: 0,
+        hasDelays: false,
+        historyCount: 0
+      };
+    }
+
+    const entry = clients[cName];
+
+    // Volume (Current Month)
+    const d = n.uploadedAt ? new Date(n.uploadedAt) : new Date();
+    if (d.getMonth() === currentMonth && d.getFullYear() === currentYear) {
+      entry.totalVol += (n.total || 0);
+    }
+
+    // Punctuality (Feb onwards)
+    // Only verify if delivered AND due date passed or paid
+    if (n.deliveredAt) {
+      const delDate = new Date(n.deliveredAt);
+      if (delDate >= FEB_START) {
+        entry.historyCount++;
+
+        // Check for delay
+        // If paid (pagado >= total), check firstPaymentAt vs dueAt
+        // If not paid fully, check if now > dueAt
+
+        const dueAt = n.dueAt ? new Date(n.dueAt) : null;
+        if (dueAt) {
+          // Grace period? strict.
+          if (n.firstPaymentAt) {
+            const payAt = new Date(n.firstPaymentAt);
+            if (payAt > dueAt) entry.hasDelays = true;
+          } else {
+            // Not paid yet. Is it overdue?
+            if (now > dueAt) entry.hasDelays = true;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. Filter VIPs
+  const vipList = [];
+  for (const [name, data] of Object.entries(clients)) {
+    // Condition: Volume > 10,000 AND No Delays (if any history exists)
+    // If no history in Feb+, they are arguably "perfect" so far, but maybe "0 delays" requirement implies they must have payment history? 
+    // Let's assume strict: hasDelays must be false. (No requirement for minimum history count, just NO delays).
+
+    if (data.totalVol > 10000 && !data.hasDelays) {
+      vipList.push(name);
+    }
+  }
+
+  return vipList;
+}
+
+// ... existing code ...
+
 // ----- API: listar notas
 app.get("/api/notas", (req, res) => {
   const notas = loadDB();
   const batchKey = getCurrentBatchKey();
   const now = new Date();
   const notasWithCredito = notas.map((n) => ({ ...n, ...computeCredito(n, now) }));
-  res.json({ batchKey, notas: notasWithCredito });
+
+  // VIP Logic
+  // We can just send the list of VIP client names
+  const vipClients = computeVipClients(notas);
+
+  res.json({ batchKey, notas: notasWithCredito, vipClients });
 });
 
-// ----- API: subir PDF
+// ... existing code ...
+
+// ----- API: Patient Button (Cierre de Mes)
+app.get("/api/report/status", (req, res) => {
+  const st = loadStatus();
+  const now = Date.now();
+  const startedAt = st.reportClosingStartedAt ? new Date(st.reportClosingStartedAt).getTime() : null;
+
+  let showButton = true;
+  let timeLeft = 0;
+
+  if (startedAt) {
+    const elapsed = now - startedAt;
+    const LIMIT = 6 * 60 * 60 * 1000; // 6 hours
+    if (elapsed > LIMIT) {
+      showButton = false;
+    } else {
+      timeLeft = LIMIT - elapsed;
+    }
+  }
+
+  res.json({ startedAt, showButton, timeLeft });
+});
+
+app.post("/api/report/start", (req, res) => {
+  const st = loadStatus();
+  if (st.reportClosingStartedAt) {
+    return res.json({ ok: true, alreadyStarted: true, startedAt: st.reportClosingStartedAt });
+  }
+
+  const now = new Date().toISOString();
+  st.reportClosingStartedAt = now;
+  saveStatus(st);
+
+  auditLog(DATA_DIR, "REPORT_START", "SUCCESS", { timestamp: now });
+
+  res.json({ ok: true, startedAt: now });
+});
+
+
+
 // ----- API: subir PDF (Data Shielding)
 app.post("/api/upload", upload.single("pdf"), async (req, res) => {
   const ACTION = "UPLOAD_PDF";

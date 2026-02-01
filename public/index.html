@@ -596,12 +596,129 @@
         min-width: 720px
       }
     }
+
+    /* Print Styles */
+    @media print {
+      body {
+        background: white;
+        color: black;
+        padding: 0;
+        display: block;
+      }
+
+      .frame {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+        width: 100%;
+        background: transparent;
+        backdrop-filter: none;
+      }
+
+      .uploader,
+      .searchWrap,
+      .miniRow,
+      .kpiActions,
+      .foot,
+      .btn,
+      .btnSmall,
+      .btnDanger,
+      .btnGhost,
+      .btn2,
+      .btn3,
+      .clearBtn {
+        display: none !important;
+      }
+
+      .topRow {
+        justify-content: center;
+        text-align: center;
+        margin-bottom: 20px;
+      }
+
+      h1 {
+        color: black;
+        font-size: 24px;
+      }
+
+      .sub {
+        display: none;
+      }
+
+      table {
+        border: 1px solid #ddd;
+        font-size: 11px;
+        min-width: 100%;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #ddd;
+        color: black;
+        padding: 6px 4px;
+      }
+
+      th {
+        color: #444;
+      }
+
+      .statusPill {
+        border: 1px solid #ccc;
+        background: transparent;
+        color: black;
+        padding: 4px 8px;
+        font-size: 10px;
+      }
+
+      .sDot {
+        border: 1px solid #000;
+      }
+
+      /* Strategic Partners Section */
+      #strategicPartners {
+        display: block !important;
+        margin-bottom: 20px;
+        border-bottom: 2px solid #000;
+        padding-bottom: 10px;
+      }
+
+      .vip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+      }
+
+      .vip-badge {
+        border: 1px solid #000;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: bold;
+      }
+    }
+
+    #strategicPartners {
+      display: none;
+    }
   </style>
 </head>
 
 <body>
   <div class="frame">
     <div class="topRow">
+      <!-- Print Header -->
+      <div id="strategicPartners">
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px">
+          <!-- Logo Placeholder or Text -->
+          <h2 style="margin:0">AVYNA - Reporte Mensual</h2>
+        </div>
+        <div style="font-size:12px; font-weight:bold; margin-bottom:5px">⭐ Socios Estratégicos (VIP)</div>
+        <div class="vip-row" id="vipListContainer">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+
       <div>
         <h1>Cobranza AVYNA - Huesito</h1>
         <p class="sub">Arrastra y suelta el PDF. El sistema extrae <b>cliente + total</b> automáticamente.</p>
@@ -821,6 +938,7 @@
     // State
     window.__allNotas = [];
     window.__batchKey = null;
+    window.__vipClients = []; // VIP
     window.__viewMode = "batch"; // "batch" | "pendientes"
 
     function setMsg(type, text) {
@@ -876,10 +994,15 @@
       }
 
       tbody.innerHTML = list.map(n => {
-        const client = escapeHtml(n.cliente || n.originalName || n.filename || "—");
+        let client = escapeHtml(n.cliente || n.originalName || n.filename || "—");
         const total = money(n.total);
         const pagado = money(n.pagado || 0);
         const saldo = money(n.saldo);
+
+        // VIP Star
+        if (window.__vipClients.includes(client) || window.__vipClients.includes(n.cliente)) {
+          client = "⭐ " + client;
+        }
 
         const st = statusLabel(n);
         const due = n.dueAt ? new Date(n.dueAt).toLocaleDateString("es-MX") : null;
@@ -902,7 +1025,7 @@
             <td class="right">${saldo}</td>
             <td>${statusHtml}</td>
             <td class="right">
-              <div style="display:flex;gap:6px;justify-content:flex-end">
+              <div style="display:flex;gap:6px;justify-content:flex-end" class="kpiActions">
                 <button class="btnSmall" data-pay="${n.id}">Pago</button>
                 <button class="btnDanger" data-del="${n.id}">✕</button>
               </div>
@@ -1035,7 +1158,14 @@
         const j = await r.json();
 
         window.__batchKey = j.batchKey || null;
+        window.__vipClients = j.vipClients || [];
         batchPill.textContent = `Batch actual: ${window.__batchKey || "—"}`;
+
+        // Populate VIP container for print
+        const vipCont = document.getElementById("vipListContainer");
+        if (vipCont) {
+          vipCont.innerHTML = window.__vipClients.map(v => `<div class="vip-badge">⭐ ${escapeHtml(v)}</div>`).join("");
+        }
 
         const notas = (j.notas || []).map(n => ({
           id: n.id,
@@ -1266,10 +1396,45 @@
     });
 
     // Report button (solo UI por ahora)
-    reportBtn.addEventListener("click", () => {
-      if (reportBtn.disabled) return;
-      setMsg("ok", "Reporte mensual: listo para generar (fin de mes).");
+    // Report button (Patient Timer)
+    reportBtn.addEventListener("click", async () => {
+      // 1. Iniciar cierre de mes en server
+      try {
+        const r = await fetch("/api/report/start", { method: "POST" });
+        const j = await r.json();
+        if (j.ok) {
+          setMsg("ok", "Modo Reporte activado. Tienes 6 horas para imprimir.");
+          window.print();
+          checkReportStatus(); // update UI immediatelly
+        }
+      } catch (e) { console.error(e); }
     });
+
+    async function checkReportStatus() {
+      try {
+        const r = await fetch("/api/report/status");
+        const j = await r.json();
+        // { startedAt, showButton, timeLeft }
+
+        if (!j.showButton) {
+          reportBtn.style.display = "none";
+        } else {
+          if (j.startedAt) {
+            // Active
+            const hours = Math.ceil(j.timeLeft / (1000 * 60 * 60));
+            reportBtn.textContent = `Reporte activo (${hours}h restantes)`;
+            reportBtn.disabled = false;
+          } else {
+            // Not started, check date
+            updateReportButton(); // standard logic
+          }
+        }
+      } catch (e) { }
+    }
+
+    // Call status check periodically
+    setInterval(checkReportStatus, 60 * 1000);
+    checkReportStatus();
 
     // REFRESH “REAL” EN iPHONE:
     // - al volver a la app (focus/visibility)
