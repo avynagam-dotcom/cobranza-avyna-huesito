@@ -670,7 +670,7 @@ app.post("/api/pago", (req, res) => {
     notas[idx] = n;
 
     // Atomic Commit
-    if (!writeDatabaseAtomicWrapper(notas)) {
+    if (!writeDatabaseAtomic(DB_FILE, notas, DATA_DIR)) {
       auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
 
       return res.status(500).json({ ok: false, message: "Error interno" });
@@ -711,7 +711,16 @@ app.delete("/api/notas/:id", (req, res) => {
 
     const n = notas[idx];
 
-    // Intentar borrar el archivo físico
+    // Quitar de la DB primero
+    notas.splice(idx, 1);
+
+    if (!writeDatabaseAtomic(DB_FILE, notas, DATA_DIR)) {
+      auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
+
+      return res.status(500).json({ ok: false, message: "Error interno" });
+    }
+
+    // Intentar borrar el archivo físico (si la DB se actualizó)
     if (n.filename) {
       const filePath = path.join(UPLOADS_DIR, n.filename);
       if (fs.existsSync(filePath)) {
@@ -724,15 +733,6 @@ app.delete("/api/notas/:id", (req, res) => {
 
         }
       }
-    }
-
-    // Quitar de la DB
-    notas.splice(idx, 1);
-
-    if (!writeDatabaseAtomicWrapper(notas)) {
-      auditLog(DATA_DIR, ACTION, "FAILURE", { reqId, reason: "Disk Write Failed" });
-
-      return res.status(500).json({ ok: false, message: "Error interno" });
     }
 
     auditLog(DATA_DIR, ACTION, "SUCCESS", { reqId, notaId: id });
